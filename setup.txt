@@ -3,3 +3,38 @@ sudo apt install -y python3-dev build-essentials
 
 sudo docker compose down
 sudo docker compose up --build 
+
+curl -s
+  http://localhost:8001/answer
+  \
+    -H "Content-Type:
+  application/json" \
+    -d '{"question": "How many
+  singers are from the US?",
+  "db": "concert_singer"}'
+
+
+
+  Phase 2 
+  scripts/manual_query.py — calls POST /v1/chat/completions on vLLM directly (no agent stack), runs the first 5 questions
+  from eval_set.jsonl, and prints each question + the SQL response with a [OK]/[WARN] status.
+
+  screenshots/ directory is ready for the screenshot.
+
+  To run it:
+  uv run python scripts/manual_query.py
+
+  When vLLM is up, run it, then take a screenshot of the terminal output and save it as screenshots/vllm_manual_query.png.
+  The output is formatted to be readable at a glance — question, SQL, and a pass count at the bottom.
+
+  Phase 3
+  To test:
+  # Start the agent server
+  uv run uvicorn agent.server:app --host 0.0.0.0 --port 8001
+
+  # Try a question (in another terminal)
+  curl -X POST http://localhost:8001/answer \
+    -H "Content-Type: application/json" \
+    -d '{"question": "List down Ajax'\''s superpowers.", "db": "superhero"}'
+
+  The history array in the response will show generate_sql → verify → revise → verify entries if a revision fires.

@@ -19,14 +19,11 @@ load_dotenv()
 
 from agent.graph import AgentState, graph  # noqa: E402
 
-# Langfuse callback handler. If keys are set we initialize it; failures
-# are NOT swallowed - a misconfigured Langfuse should not silently
-# produce zero traces.
-_lf_handler: Any = None
-if os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"):
-    from langfuse.langchain import CallbackHandler
-
-    _lf_handler = CallbackHandler()
+_LANGFUSE_ENABLED = bool(
+    os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
+)
+if _LANGFUSE_ENABLED:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 
 
 app = FastAPI()
@@ -35,6 +32,8 @@ app = FastAPI()
 class AnswerRequest(BaseModel):
     question: str
     db: str
+    # Freeform metadata forwarded to Langfuse as tags + metadata.
+    # Useful keys for Phase-6 filtering: eval_run, split, question_id.
     tags: dict[str, str] = {}
 
 
@@ -47,6 +46,20 @@ class AnswerResponse(BaseModel):
     history: list[dict[str, Any]] = []
 
 
+def _make_callback(db_id: str, extra: dict[str, str]) -> list[Any]:
+    """Return a per-request Langfuse callback handler, or empty list if not configured.
+
+    A fresh handler per request gives each agent run its own Langfuse trace,
+    with db_id always present so Phase-6 can filter by database.
+    """
+    if not _LANGFUSE_ENABLED:
+        return []
+    metadata = {"db_id": db_id, **extra}
+    # tags are the string list shown in Langfuse's filter sidebar
+    tags = [f"db:{db_id}"] + [f"{k}:{v}" for k, v in extra.items()]
+    return [LangfuseCallbackHandler(tags=tags, metadata=metadata)]
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -56,8 +69,8 @@ def health() -> dict[str, str]:
 def answer(req: AnswerRequest) -> AnswerResponse:
     state = AgentState(question=req.question, db_id=req.db)
     config: dict[str, Any] = {
-        "callbacks": [_lf_handler] if _lf_handler is not None else [],
-        "metadata": req.tags,
+        "callbacks": _make_callback(req.db, req.tags),
+        "metadata": {"db_id": req.db, **req.tags},
     }
     try:
         final = graph.invoke(state, config=config)

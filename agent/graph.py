@@ -134,7 +134,10 @@ def verify_node(state: AgentState) -> dict:
     except Exception:
         ok = False
         issue = f"Could not parse verifier response: {text[:200]}"
-    return {"verify_ok": ok, "verify_issue": issue}
+    entry: dict[str, Any] = {"node": "verify", "ok": ok}
+    if not ok:
+        entry["issue"] = issue
+    return {"verify_ok": ok, "verify_issue": issue, "history": state.history + [entry]}
 
 
 def revise_node(state: AgentState) -> dict:
