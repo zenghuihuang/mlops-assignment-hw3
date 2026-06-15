@@ -1,0 +1,5 @@
+sudo apt update
+sudo apt install -y python3-dev build-essentials
+
+sudo docker compose down
+sudo docker compose up --build 

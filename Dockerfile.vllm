@@ -4,7 +4,7 @@ RUN apt update && apt install -y python3 python3-pip git
 
 RUN pip install vllm uv
 
-COPY start_vllm.sh /start_vllm.sh
+COPY scripts/start_vllm.sh /start_vllm.sh
 RUN chmod +x /start_vllm.sh
 
 CMD ["/start_vllm.sh"]

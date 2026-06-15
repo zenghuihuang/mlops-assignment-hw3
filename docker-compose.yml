@@ -5,8 +5,8 @@
 #   - grafana    (port 3000, datasource + starter dashboard auto-loaded)
 #   - langfuse   (port 3001) backed by postgres + clickhouse + redis + minio
 #
-# vLLM itself runs on the host (NOT in this compose), so port forwards from
-# your laptop see localhost:8000 -> vLLM, localhost:3000 -> Grafana, etc.
+# vLLM runs inside this compose stack (vllm_server), requires an NVIDIA GPU.
+# Port forwards: localhost:8000 -> vLLM, localhost:3000 -> Grafana, etc.
 
 x-langfuse-env: &langfuse-env
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
