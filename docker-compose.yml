@@ -38,6 +38,18 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
 
 services:
+
+  vllm_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
   prometheus:
     image: prom/prometheus:v2.55.0
     restart: always
