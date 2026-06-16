@@ -1,4 +1,4 @@
-hello
+
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 sudo apt update
@@ -16,7 +16,12 @@ curl -s
   singers are from the US?",
   "db": "concert_singer"}'
 
+sudo docker compose up -d
+  --force-recreate vllm_server
 
+sudo docker compose build vllm_server && sudo docker compose up -d vllm_server
+
+sudo docker logs -f mlops-assignment-hw3-vllm_server-1
 
   Phase 2 
   scripts/manual_query.py — calls POST /v1/chat/completions on vLLM directly (no agent stack), runs the first 5 questions
@@ -30,6 +35,24 @@ curl -s
   When vLLM is up, run it, then take a screenshot of the terminal output and save it as screenshots/vllm_manual_query.png.
   The output is formatted to be readable at a glance — question, SQL, and a pass count at the bottom.
 
+
+
+
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "messages": [
+      {
+        "role": "user",
+        "content": "You are a SQL assistant. Given a table orders(id, customer_id, total_amount, created_at), write a SQL query to get the top 10 customers by total_amount in the last 30 days. Return ONLY the SQL."
+      }
+    ],
+    "temperature": 0.2,
+    "max_completion_tokens": 256
+  }'
+
+
   Phase 3
   To test:
   # Start the agent server
@@ -41,3 +64,73 @@ curl -s
     -d '{"question": "List down Ajax'\''s superpowers.", "db": "superhero"}'
 
   The history array in the response will show generate_sql → verify → revise → verify entries if a revision fires.
+
+  Phase 4
+   Manual steps (one-time):
+  1. Go to
+  http://localhost:3001, sign
+  up, create a project
+  2. Copy the public + secret
+  keys into .env:
+  LANGFUSE_PUBLIC_KEY=pk-lf-...
+  LANGFUSE_SECRET_KEY=sk-lf-...
+  LANGFUSE_HOST=http://localhos
+  t:3001
+  3. Start the agent: uv run
+  uvicorn agent.server:app
+  --host 0.0.0.0 --port 8001
+  4. Run: uv run python
+  scripts/fire_traces.py
+  5. In Langfuse, filter traces
+  by tag eval_run:phase4 —
+  LANGFUSE_SECRET_KEY=sk-lf-...
+  LANGFUSE_HOST=http://localhost:3001
+  3. Start the agent: uv run uvicorn agent.server:app --host 0.0.0.0 --port 8001
+  4. Run: uv run python scripts/fire_traces.py
+  5. In Langfuse, filter traces by tag eval_run:phase4 — each trace shows the generate_sql → verify → (revise →) verify
+  waterfall with latency and token counts per span
+
+
+ Phase 5 
+ eval_one:
+  - Runs the gold SQL first to get the reference rows
+  - Calls the agent with eval_run: baseline tag (Langfuse will capture this)
+  - Extracts SQL from only generate_sql and revise history entries (skips verify entries, which have no sql key)
+  - Runs and scores each iteration's SQL independently against gold rows — so you get per-iteration accuracy, not just
+  final
+  - Returns per_iter_correct: {0: bool, 1: bool, ...} keyed by iteration index 
+ To run:
+  # agent server must be running
+  uv run python evals/run_eval.py --out results/eval_baseline.json
+
+  The output JSON will have summary.per_iteration_accuracy — if iter_0 == iter_2, the verify→revise loop is not helping. If
+  iter_2 > iter_0, it's earning its keep.
+
+  Phase 6 
+   Grafana dashboard — 6 panels, 3 rows:
+
+  ┌────────────┬───────────────────────────────────────────────────────┬───────────────────────────────────────────────┐
+  │    Row     │                      Left panel                       │                  Right panel                  │
+  ├────────────┼───────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+  │ Latency    │ E2E latency P50/P95/P99 with 5 s SLO threshold in red │ TTFT + TPOT P95 (where in the lifecycle?)     │
+  ├────────────┼───────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+  │ Throughput │ Requests running vs waiting queue                     │ Gen tokens/s + Prompt tokens/s                │
+  ├────────────┼───────────────────────────────────────────────────────┼───────────────────────────────────────────────┤
+  │ KV cache   │ GPU KV cache % (orange >75%, red >90%)                │ Preemptions/s (any non-zero = cache pressure) │
+  └────────────┴───────────────────────────────────────────────────────┴───────────────────────────────────────────────┘
+
+  Runbook for Phase 6:
+
+  # 1. Restart Grafana to pick up the new dashboard JSON
+  docker compose restart grafana
+
+  # 2. Run baseline load test (watch Grafana while it runs)
+  uv run python load_test/driver.py --rps 10 --duration 300
+
+  # 3. Fill in REPORT.md iteration log as you tune
+
+  # 4. After tuning, run eval to check quality survived
+  uv run python evals/run_eval.py --out results/eval_after_tuning.json
+
+──The─dashboard─is─designed─to─answer─"is─it─slow,─and─where?"─at─a─glance:─if─TTFT─is─high─→─prefill─is─the─bottleneck;─if
+  TPOT is high → decode is saturated; if KV cache hits 90%+ → concurrency limit is the culprit.
