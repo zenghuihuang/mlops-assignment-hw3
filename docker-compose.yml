@@ -45,6 +45,9 @@ services:
       dockerfile: Dockerfile.vllm
     ports:
       - "8000:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN}       
+    restart: always
     deploy:
       resources:
         reservations:
