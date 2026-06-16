@@ -58,7 +58,61 @@ def matches(gold_rows: list[tuple] | None, pred_rows: list[tuple] | None) -> boo
 
 def eval_one(question: dict, agent_url: str) -> dict:
     """Score one question. Return a dict capturing per-iteration correctness."""
-    raise NotImplementedError("Phase 5")
+    db_id = question["db_id"]
+
+    # Gold answer — what we're comparing against.
+    _, gold_rows, _ = run_sql(db_id, question["gold_sql"])
+
+    # Call the agent.
+    try:
+        resp = httpx.post(
+            agent_url,
+            json={
+                "question": question["question"],
+                "db": db_id,
+                "tags": {"eval_run": "baseline"},
+            },
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "question": question["question"],
+            "db_id": db_id,
+            "error": str(exc),
+            "iterations": 0,
+            "per_iter_correct": {},
+            "final_correct": False,
+        }
+
+    # Walk the history to collect the SQL produced at each generate/revise step.
+    # history entry nodes: "generate_sql", "verify", "revise"
+    history = data.get("history", [])
+    sql_per_iter = [
+        entry["sql"]
+        for entry in history
+        if entry.get("node") in ("generate_sql", "revise")
+    ]
+
+    # Score each iteration against the gold rows.
+    per_iter_correct: dict[int, bool] = {}
+    for i, sql in enumerate(sql_per_iter):
+        _, pred_rows, _ = run_sql(db_id, sql)
+        per_iter_correct[i] = matches(gold_rows, pred_rows)
+
+    final_correct = per_iter_correct.get(len(sql_per_iter) - 1, False) if sql_per_iter else False
+
+    return {
+        "question": question["question"],
+        "db_id": db_id,
+        "gold_sql": question["gold_sql"],
+        "agent_sql": data.get("sql", ""),
+        "agent_ok": data.get("ok", False),
+        "iterations": data.get("iterations", 0),
+        "per_iter_correct": per_iter_correct,
+        "final_correct": final_correct,
+    }
 
 
 def summarize(results: list[dict]) -> dict:
@@ -70,7 +124,41 @@ def summarize(results: list[dict]) -> dict:
     The agent stopped emitting; whatever it had at termination is what
     would have been served had we polled at iteration k.
     """
-    raise NotImplementedError("Phase 5")
+    if not results:
+        return {"n": 0, "overall_accuracy": 0.0, "per_iteration_accuracy": {}}
+
+    # JSON round-trips turn int keys into strings; normalise to int here.
+    def _int_keys(d: dict) -> dict[int, bool]:
+        return {int(k): v for k, v in d.items()}
+
+    # How many iteration slots do we need?
+    max_iter = max(
+        (max(_int_keys(r["per_iter_correct"]).keys(), default=-1) + 1
+         for r in results),
+        default=0,
+    )
+
+    per_iter_accuracy: dict[str, float] = {}
+    for k in range(max_iter):
+        correct = 0
+        for r in results:
+            pc = _int_keys(r["per_iter_correct"])
+            if not pc:
+                # Agent failed entirely — not correct at any iteration.
+                continue
+            # Carry-forward: use the last result at or before k.
+            available = [i for i in pc if i <= k]
+            if available and pc[max(available)]:
+                correct += 1
+        per_iter_accuracy[f"iter_{k}"] = round(correct / len(results), 4)
+
+    overall = sum(1 for r in results if r.get("final_correct", False)) / len(results)
+
+    return {
+        "n": len(results),
+        "overall_accuracy": round(overall, 4),
+        "per_iteration_accuracy": per_iter_accuracy,
+    }
 
 
 # ---------- Main (provided) --------------------------------------------

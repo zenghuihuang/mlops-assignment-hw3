@@ -54,10 +54,7 @@ def _make_callback(db_id: str, extra: dict[str, str]) -> list[Any]:
     """
     if not _LANGFUSE_ENABLED:
         return []
-    metadata = {"db_id": db_id, **extra}
-    # tags are the string list shown in Langfuse's filter sidebar
-    tags = [f"db:{db_id}"] + [f"{k}:{v}" for k, v in extra.items()]
-    return [LangfuseCallbackHandler(tags=tags, metadata=metadata)]
+    return [LangfuseCallbackHandler()]
 
 
 @app.get("/health")
